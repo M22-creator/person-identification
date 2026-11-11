@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+# Face embeddings and images are biometric data: never commit them.
+data/*
+!data/.gitkeep
+*.npz
+*.mp4
+*.bag

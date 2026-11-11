@@ -1,0 +1,22 @@
+# Which identifier backend to use. "dummy" detects nobody; replace with your own.
+identifier: dummy
+
+# Where enrolled embeddings are stored (git-ignored).
+gallery_path: data/gallery.npz
+
+# Cosine-similarity thresholds. PLACEHOLDERS: tune on your own model and data.
+#   score >= recognize_threshold            -> recognized
+#   score <  unknown_threshold              -> unknown
+#   in between                              -> uncertain
+recognize_threshold: 0.50
+unknown_threshold: 0.30
+
+# Camera: "realsense", a device index like "0", or a video file path.
+source: "0"
+width: 640
+height: 480
+fps: 30
+
+# Output: "stdout" (one JSON per line) or "ros2".
+publisher: stdout
+ros2_topic: /person_id/result

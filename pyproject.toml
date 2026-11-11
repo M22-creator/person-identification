@@ -1,0 +1,18 @@
+[project]
+name = "person-id"
+version = "0.1.0"
+description = "Person identification module for the AVA robot"
+requires-python = ">=3.8"
+dependencies = ["numpy", "pyyaml"]
+
+[project.optional-dependencies]
+camera = ["opencv-python"]
+realsense = ["pyrealsense2"]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["person_id"]

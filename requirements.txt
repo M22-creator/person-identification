@@ -1,0 +1,6 @@
+numpy
+pyyaml
+opencv-python
+# Optional, install only where needed:
+# pyrealsense2        # RealSense D435i input
+# <your face model>   # e.g. insightface + onnxruntime
