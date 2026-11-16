@@ -3,4 +3,5 @@ pyyaml
 opencv-python
 # Optional, install only where needed:
 # pyrealsense2        # RealSense D435i input
-# <your face model>   # e.g. insightface + onnxruntime
+# insightface        # "insightface" identifier backend (SCRFD + ArcFace)
+# onnxruntime        # needed by insightface; use onnxruntime-gpu on a CUDA machine
