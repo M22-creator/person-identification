@@ -1,10 +1,12 @@
-# Which identifier backend to use. "dummy" detects nobody; replace with your own.
-identifier: dummy
+# Which identifier backend to use: "insightface" (SCRFD + ArcFace) or "dummy"
+# (detects nobody, needs no extra packages).
+identifier: insightface
 
 # Where enrolled embeddings are stored (git-ignored).
 gallery_path: data/gallery.npz
 
-# Cosine-similarity thresholds. PLACEHOLDERS: tune on your own model and data.
+# Cosine-similarity thresholds. Starting values for the
+# insightface backend, NOT yet tuned on robot data.
 #   score >= recognize_threshold            -> recognized
 #   score <  unknown_threshold              -> unknown
 #   in between                              -> uncertain
