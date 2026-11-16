@@ -13,6 +13,13 @@ gallery_path: data/gallery.npz
 recognize_threshold: 0.50
 unknown_threshold: 0.30
 
+# Live web view (python -m person_id.web) only: save faces the gallery does not
+# know as "person_N" once they have been seen clearly this many times. Use only
+# where everyone in view has agreed to be stored. person_id.run never enrolls.
+auto_enroll: true
+auto_enroll_samples: 10
+auto_enroll_min_face_px: 48   # ignore faces smaller than this
+
 # Camera: "realsense", a device index like "0", or a video file path.
 source: "0"
 width: 640
