@@ -73,6 +73,34 @@ walk into view. The page has no login and listens on localhost only: from a
 laptop use `ssh -L 8000:localhost:8000 <user>@<robot>`. It owns the camera, so
 do not run `person_id.run` at the same time; pass `--publisher ros2` instead.
 
+## Comparing recognition models
+
+The web view has a **Recognition model** selector and a **Compare models** page
+(`/compare`). Three backends share the same YuNet detector, so only the
+recognition model differs:
+
+| backend | model | embedding | license |
+|---|---|---|---|
+| `sface` | OpenCV SFace | 128-D | Apache-2.0 |
+| `arcface_mbf` | InsightFace buffalo_s, ArcFace MobileFaceNet | 512-D | non-commercial research only |
+| `arcface_r50` | InsightFace buffalo_l, ArcFace ResNet-50 | 512-D | non-commercial research only |
+
+Each backend has its own gallery file and thresholds (`models:` in the config),
+because embeddings of different models cannot be compared. Switching models keeps
+every model's enrolled people; they are just in separate galleries.
+
+```bash
+pip install onnxruntime                                   # ArcFace backends (CPU)
+python -m person_id.download_models --model all           # ~420 MB download, ~190 MB kept
+python tools/bench_models.py --lfw data/bench/lfw --out data/bench/results.json
+```
+
+`bench_models.py` runs the LFW 6000-pair, 10-fold benchmark for each model and
+times detection and embedding on 640x480 frames on the current machine. The
+`/compare` page shows its `results.json` (error rate, TAR at FAR 0.1%, ROC,
+latency, memory) plus live latency from the camera stream. Run the benchmark
+while nothing else uses the CPU heavily; the load average is recorded.
+
 ## Data
 
 `data/` holds face embeddings, which are biometric data. It is git-ignored;
