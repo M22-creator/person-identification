@@ -9,3 +9,8 @@ data/*
 *.npz
 *.mp4
 *.bag
+# Model weights: fetched by person_id.download_models, never committed.
+models/
+*.onnx
+*.pt
+*.pth
