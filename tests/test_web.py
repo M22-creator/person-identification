@@ -201,3 +201,46 @@ def test_avatar_endpoint(live):
             assert e.code == 400
     finally:
         httpd.shutdown()
+
+
+def _mvhd_seconds(data: bytes) -> float:
+    import struct
+    i = data.find(b"mvhd")
+    v = data[i + 4]
+    ts, dur = struct.unpack(">II", data[i + 16:i + 24]) if v == 0 else struct.unpack(">IQ", data[i + 24:i + 36])
+    return dur / ts
+
+
+def test_fix_recording_turns_a_browser_mp4_into_a_playable_one(live, tmp_path):
+    import shutil
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    frag = tmp_path / "chrome-like.mp4"  # fragmented, header duration 0, like Chrome's MediaRecorder
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=10",
+                    "-c:v", "mpeg4", "-movflags", "frag_keyframe+empty_moov", str(frag)], check=True)
+    assert _mvhd_seconds(frag.read_bytes()) == 0
+    data_dir = tmp_path / "data"
+    live.cfg["gallery_path"] = str(data_dir / "g.npz")
+    httpd, base = _serve(live)
+    try:
+        req = urllib.request.Request(base + "/api/fix-recording", frag.read_bytes(), {"Content-Type": "video/mp4"})
+        with urllib.request.urlopen(req) as r:
+            assert r.headers["Content-Type"] == "video/mp4"
+            fixed = r.read()
+        assert abs(_mvhd_seconds(fixed) - 2.0) < 0.2
+        import time
+        for _ in range(40):  # the temp folder is removed right after the response is sent
+            if not list(data_dir.iterdir()):
+                break
+            time.sleep(0.05)
+        assert list(data_dir.iterdir()) == []  # nothing kept on the robot
+        for body, ctype, code in ((b"x", "text/plain", 415), (b"", "video/mp4", 413)):
+            try:
+                urllib.request.urlopen(urllib.request.Request(base + "/api/fix-recording", body, {"Content-Type": ctype}))
+                assert False
+            except urllib.error.HTTPError as e:
+                assert e.code == code
+    finally:
+        httpd.shutdown()

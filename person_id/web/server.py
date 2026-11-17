@@ -23,6 +23,9 @@ import argparse
 import base64
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -50,6 +53,23 @@ PAGE_PATH = Path(__file__).with_name("index.html")
 #   pixelate  - the face crop reduced to a 6x6 mosaic
 #   photo     - the face crop itself
 THUMB_MODES = ("avatar", "pixelate", "photo")
+MAX_RECORDING_BYTES = 1 << 30  # 1 GiB
+
+
+def fix_recording(src: Path, dst: Path, mime: str) -> None:
+    """Rewrite a browser recording as a standard MP4 that QuickTime/Preview/PowerPoint play.
+
+    Chrome's MediaRecorder writes fragmented MP4 whose header says the duration is 0, so
+    macOS players show only the first frame. For MP4 input the streams are copied (lossless,
+    fast); WebM input is re-encoded with ffmpeg's built-in MPEG-4 encoder.
+    """
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg is not installed on the robot computer")
+    codec = ["-c", "copy"] if "mp4" in mime else ["-c:v", "mpeg4", "-q:v", "3", "-an"]
+    cmd = ["nice", "-n", "15", "ffmpeg", "-v", "error", "-y", "-i", str(src), *codec, "-movflags", "+faststart", str(dst)]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if res.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+        raise RuntimeError("ffmpeg failed: " + (res.stderr.strip()[-300:] or "no output"))
 COMPARE_PATH = Path(__file__).with_name("compare.html")
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
@@ -389,7 +409,43 @@ def make_handler(live: Live):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
+        def _fix_recording(self):
+            """POST /api/fix-recording with the recorded video as the body; returns a standard MP4.
+            Nothing is kept: the files live in a temporary folder that is deleted right away."""
+            mime = self.headers.get("Content-Type", "").split(";")[0].strip()
+            if mime not in ("video/mp4", "video/webm"):
+                return self._json(415, {"error": "Content-Type must be video/mp4 or video/webm"})
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= MAX_RECORDING_BYTES:
+                return self._json(413, {"error": "Recording missing or larger than 1 GiB"})
+            tmp_root = Path(live.cfg.get("gallery_path", "data/x")).parent  # stay inside the repo's data/
+            tmp_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="rec-", dir=tmp_root) as tmp:
+                src, dst = Path(tmp) / ("in.mp4" if "mp4" in mime else "in.webm"), Path(tmp) / "out.mp4"
+                with open(src, "wb") as f:
+                    left = length
+                    while left:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            return self._json(400, {"error": "Upload ended early"})
+                        f.write(chunk)
+                        left -= len(chunk)
+                try:
+                    fix_recording(src, dst, mime)
+                except (RuntimeError, subprocess.TimeoutExpired) as e:
+                    return self._json(500, {"error": str(e)})
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(dst.stat().st_size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                with open(dst, "rb") as f:
+                    shutil.copyfileobj(f, self.wfile, 1 << 20)
+
         def do_POST(self):
+            if self.path == "/api/fix-recording":
+                # A cross-site form cannot send video/* without a CORS preflight, which is never answered.
+                return self._fix_recording()
             # Requiring JSON keeps other websites open in the same browser from
             # posting here: a cross-site JSON request needs a CORS preflight,
             # which this server never answers.
