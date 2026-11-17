@@ -31,8 +31,13 @@ class Candidate:
     last_sample: float = 0.0
     last_seen: float = 0.0
 
+    def centroid(self) -> np.ndarray:
+        return _unit(np.mean(np.stack(self.embeddings), axis=0))
+
     def similarity(self, embedding: np.ndarray) -> float:
-        return float(np.max(np.stack(self.embeddings) @ embedding))
+        # Against the average of the samples so far, not the closest single sample:
+        # matching the closest sample lets one odd sample chain two people together.
+        return float(self.centroid() @ embedding)
 
 
 @dataclass
@@ -50,8 +55,8 @@ class AutoEnroller:
         gallery: Gallery,
         gallery_path: str,
         same_threshold: float = 0.5,   # cosine score for "same face as this candidate"
-        samples: int = 10,
-        sample_gap_s: float = 0.3,     # spacing, so samples are not near-identical frames
+        samples: int = 8,
+        sample_gap_s: float = 0.25,    # spacing, so samples are not near-identical frames
         forget_after_s: float = 5.0,   # drop a candidate that has not been seen for this long
         min_face_px: int = 48,         # ignore faces smaller than this: too blurry to store
         prefix: str = "person_",
@@ -66,6 +71,8 @@ class AutoEnroller:
         self.prefix = prefix
         self.candidates: List[Candidate] = []
         self._next_key = 1
+        # Per detection of the last update(): why that face is not being learned (or None).
+        self.last_blocked: List[Optional[str]] = []
 
     def _next_id(self) -> str:
         pattern = re.compile(re.escape(self.prefix) + r"(\d+)$")
@@ -80,15 +87,25 @@ class AutoEnroller:
 
         Only "unknown" faces are learned. "uncertain" ones are left alone: they
         may be an enrolled person at a bad angle, and learning them would give
-        one person two IDs.
+        one person two IDs. Before a candidate is saved its samples must agree
+        with each other, and it must not match anyone already enrolled.
         """
         out: List[Optional[Progress]] = [None] * len(detections)
+        self.last_blocked = [None] * len(detections)
         if len(detections) != len(results):  # the single no_person result
             detections = []
         taken_keys = set()
         for i, (det, res) in enumerate(zip(detections, results)):
+            if res.status is Status.RECOGNIZED:
+                continue
+            if res.status is Status.UNCERTAIN:
+                pid, score = self.gallery.match(det.embedding)
+                self.last_blocked[i] = f"similar to {pid} ({score:.2f}): not sure this is a new person"
+                continue
             x1, y1, x2, y2 = det.bbox
-            if res.status is not Status.UNKNOWN or min(x2 - x1, y2 - y1) < self.min_face_px:
+            size = min(x2 - x1, y2 - y1)
+            if size < self.min_face_px:
+                self.last_blocked[i] = f"face too small to learn ({size} px, needs {self.min_face_px}): come closer"
                 continue
             emb = _unit(det.embedding)
             cand = self._match(emb, taken_keys)
@@ -101,12 +118,33 @@ class AutoEnroller:
             if not cand.embeddings or now - cand.last_sample >= self.sample_gap_s:
                 cand.embeddings.append(emb)
                 cand.last_sample = now
-            out[i] = Progress(cand.key, len(cand.embeddings), self.samples)
             if len(cand.embeddings) >= self.samples:
-                out[i].enrolled_as = self._save(cand)
+                verdict = self._check(cand)
+                if verdict is None:
+                    out[i] = Progress(cand.key, len(cand.embeddings), self.samples, self._save(cand))
+                    continue
+                self.last_blocked[i] = verdict
+                if cand not in self.candidates:  # discarded as a duplicate
+                    continue
+            out[i] = Progress(cand.key, len(cand.embeddings), self.samples)
 
         self.candidates = [c for c in self.candidates if now - c.last_seen <= self.forget_after_s]
         return out
+
+    def _check(self, cand: Candidate) -> Optional[str]:
+        """None if the candidate can be saved; otherwise why not (and fix it up)."""
+        c = cand.centroid()
+        sims = np.stack(cand.embeddings) @ c
+        keep = [e for e, s in zip(cand.embeddings, sims) if s >= self.same_threshold]
+        if len(keep) < len(cand.embeddings):
+            dropped = len(cand.embeddings) - len(keep)
+            cand.embeddings = keep  # keep learning; the outliers were probably someone else or a blur
+            return f"dropped {dropped} sample(s) that did not match the rest; collecting more"
+        pid, score = self.gallery.match(c)
+        if pid is not None and score >= self.same_threshold:
+            self.candidates.remove(cand)
+            return f"already enrolled as {pid} ({score:.2f}); not saved again"
+        return None
 
     def _match(self, emb: np.ndarray, taken_keys: set) -> Optional[Candidate]:
         best, best_score = None, self.same_threshold

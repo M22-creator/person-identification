@@ -128,7 +128,8 @@ class Live:
                 gallery,
                 settings["gallery_path"],
                 same_threshold=settings["recognize_threshold"],
-                samples=int(self.cfg.get("auto_enroll_samples", 10)),
+                samples=int(self.cfg.get("auto_enroll_samples", 8)),
+                sample_gap_s=float(self.cfg.get("auto_enroll_sample_gap_s", 0.25)),
                 min_face_px=int(self.cfg.get("auto_enroll_min_face_px", 48)),
             )
             with self.lock:
@@ -186,6 +187,7 @@ class Live:
                 progress = self.auto.update(self.tap.last, results, started)
             else:
                 progress = [None] * len(results)
+            blocked = list(self.auto.last_blocked) if self.auto_on else []
             live_keys = {c.key for c in self.auto.candidates}
             # Interaction history: recognized people, plus anyone enrolled on this frame.
             scores = {r.person_id: r.confidence for r in results if r.status is Status.RECOGNIZED}
@@ -198,7 +200,7 @@ class Live:
 
         shown = frame.copy()
         faces, learning = [], {}
-        for r, prog in zip(results, progress):
+        for idx, (r, prog) in enumerate(zip(results, progress)):
             if r.bbox is None:
                 continue
             x1, y1, x2, y2 = r.bbox
@@ -211,7 +213,8 @@ class Live:
             cv2.putText(shown, text, (x1 + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
 
             thumb = self._thumb(frame, r.bbox)
-            face = {**r.to_dict(), "thumb": thumb, "learning": None}
+            face = {**r.to_dict(), "thumb": thumb, "learning": None,
+                    "not_learning": blocked[idx] if idx < len(blocked) else None}
             if prog:
                 face["learning"] = {"taken": prog.taken, "target": prog.target, "enrolled_as": prog.enrolled_as}
                 if prog.enrolled_as:

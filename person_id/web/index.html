@@ -76,6 +76,7 @@
   table.visits th:first-child, table.visits td:first-child, table.visits th:nth-child(2), table.visits td:nth-child(2) { text-align: left; }
   table.visits thead th { color: var(--dim); font-weight: 600; }
   .now { color: var(--ok); font-weight: 600; }
+  .warnline { color: var(--warn); }
   #rec { padding: 5px 12px; font-size: 14px; }
   #rec.on { background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 600; }
   #rec.on::first-letter { animation: blink 1s steps(2, start) infinite; }
@@ -204,6 +205,7 @@ function renderFaces(faces) {
     top.append(el("span", "tag " + f.status, f.status));
     if (f.learning) top.append(el("span", "tag learning", f.learning.enrolled_as ? "saved as " + f.learning.enrolled_as : "learning"));
     info.append(top, el("div", "meta", "match score " + f.confidence.toFixed(2)));
+    if (f.not_learning && autoOn) info.append(el("div", "meta warnline", "Not learning: " + f.not_learning));
     row.append(info); box.append(row);
   }
 }

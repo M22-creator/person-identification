@@ -39,7 +39,8 @@ models:
 # know as "person_N" once they have been seen clearly this many times. Use only
 # where everyone in view has agreed to be stored. person_id.run never enrolls.
 auto_enroll: true
-auto_enroll_samples: 10
+auto_enroll_samples: 8          # with the gap below: about 2-3 s of facing the camera
+auto_enroll_sample_gap_s: 0.25  # minimum time between samples, so they are not near-identical
 auto_enroll_min_face_px: 48   # ignore faces smaller than this
 
 # Web view: how people are pictured in its side lists. The live video always shows the camera.
