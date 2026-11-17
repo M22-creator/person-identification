@@ -54,18 +54,30 @@
             border-top: 1px solid var(--line); }
   .person:first-of-type { border-top: 0; }
   .person button { padding: 3px 10px; font-size: 13px; }
+  .controls { display: flex; gap: 14px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+  .controls label { color: var(--dim); font-size: 13px; }
+  select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+           background: #2a2f38; color: var(--text); margin-left: 6px; }
+  select:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  a { color: var(--accent); }
+  .switching { color: var(--warn); font-size: 13px; }
 </style>
 </head>
 <body>
 <header>
   <h1>AVA person identification</h1>
   <span class="meta" id="meta">connecting...</span>
+  <div class="controls">
+    <label for="model">Recognition model<select id="model" aria-describedby="modelnote"></select></label>
+    <span id="modelnote" class="switching" role="status"></span>
+    <a href="/compare">Compare models &rarr;</a>
+  </div>
 </header>
 <main>
   <section class="panel">
     <p class="banner err" id="error" hidden></p>
     <p class="banner" id="dummy" hidden>The "dummy" identifier is active, so no face will ever be detected.
-      Start with <code>--identifier insightface</code>.</p>
+      Pick another recognition model at the top of the page.</p>
     <img id="video" src="/stream.mjpg" alt="Live camera with a box around each detected face">
     <div class="legend">
       <span><span class="dot" style="background:var(--ok)"></span>recognized: matches an enrolled person</span>
@@ -98,6 +110,31 @@ const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 let armed = null;      // ID whose Remove button was clicked once
 let autoOn = true;
+let switching = false;
+
+function renderModels(models, current) {
+  const sel = $("model");
+  const key = models.map(m => m.name + (m.available ? "" : "!")).join(",");
+  if (sel.dataset.key !== key) {
+    sel.replaceChildren();
+    for (const m of models) {
+      const o = el("option", null, m.label + (m.dim ? " (" + m.dim + "-D)" : "") + (m.available ? "" : " - weights missing"));
+      o.value = m.name; o.disabled = !m.available; o.title = m.hint || m.about || "";
+      sel.append(o);
+    }
+    sel.dataset.key = key;
+  }
+  if (!switching && document.activeElement !== sel) sel.value = current;
+}
+
+$("model").onchange = async () => {
+  const name = $("model").value;
+  switching = true; $("model").disabled = true;
+  $("modelnote").textContent = "Loading " + name + "...";
+  const err = await post("/api/model", {name});
+  switching = false; $("model").disabled = false;
+  $("modelnote").textContent = err || "";
+};
 
 async function post(path, body) {
   const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
@@ -161,7 +198,11 @@ function renderLearning(list, on) {
 async function tick() {
   try {
     const s = await (await fetch("/api/state")).json();
-    $("meta").textContent = "source " + s.source + " | " + s.identifier + " | " + s.fps + " fps | recognized at " + s.recognize_threshold + ", unknown below " + s.unknown_threshold;
+    const L = s.latency || {};
+    const ms = v => (v == null ? "-" : v.toFixed(1) + " ms");
+    $("meta").textContent = "source " + s.source + " | " + s.fps + " fps | detect " + ms(L.detect_ms) +
+      ", embed " + ms(L.embed_ms_per_face) + "/face | recognized at " + s.recognize_threshold + ", unknown below " + s.unknown_threshold;
+    renderModels(s.models || [], s.identifier);
     $("error").hidden = !s.error; $("error").textContent = s.error || "";
     $("dummy").hidden = s.identifier !== "dummy";
     renderFaces(s.faces); renderPeople(s.people); renderLearning(s.learning, s.auto_enroll);

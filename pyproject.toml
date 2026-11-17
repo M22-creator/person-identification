@@ -7,6 +7,7 @@ dependencies = ["numpy", "pyyaml", "opencv-python>=4.8"]  # opencv: default sfac
 
 [project.optional-dependencies]
 camera = ["opencv-python>=4.8"]
+arcface = ["onnxruntime>=1.17"]   # arcface_mbf / arcface_r50 backends (CPU)
 realsense = ["pyrealsense2"]
 dev = ["pytest"]
 
@@ -18,4 +19,4 @@ build-backend = "setuptools.build_meta"
 packages = ["person_id", "person_id.web"]
 
 [tool.setuptools.package-data]
-"person_id.web" = ["index.html"]
+"person_id.web" = ["index.html", "compare.html"]

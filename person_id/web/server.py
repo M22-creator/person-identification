@@ -33,14 +33,15 @@ import numpy as np
 
 from .auto_enroll import AutoEnroller, Progress
 from ..camera import open_source
-from ..config import DEFAULT_PATH, load_config
+from ..config import DEFAULT_PATH, load_config, model_settings
 from ..gallery import Gallery
-from ..identifier import Identifier, build_identifier
+from ..identifier import COMPARED, Identifier, build_identifier, missing_weights
 from ..pipeline import Pipeline
 from ..publishers import build_publisher
 from ..types import Detection, IdentityResult, Status
 
 PAGE_PATH = Path(__file__).with_name("index.html")
+COMPARE_PATH = Path(__file__).with_name("compare.html")
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 # BGR box colors. The label text carries the same information as the color.
@@ -83,29 +84,58 @@ class Live:
         self.cfg = cfg
         self.loop = loop
         self.publisher = publisher
-        self.tap = _Tap(build_identifier(cfg["identifier"]))
-        self.gallery = Gallery.load(cfg["gallery_path"])
-        self.pipeline = Pipeline(
-            self.tap, self.gallery, cfg["recognize_threshold"], cfg["unknown_threshold"]
-        )
-        self.auto = AutoEnroller(
-            self.gallery,
-            cfg["gallery_path"],
-            same_threshold=cfg["recognize_threshold"],
-            samples=int(cfg.get("auto_enroll_samples", 10)),
-            min_face_px=int(cfg.get("auto_enroll_min_face_px", 48)),
-        )
         self.auto_on = bool(cfg.get("auto_enroll", True))
-        self.lock = threading.Lock()  # guards gallery, auto, faces, thumbs, error
+        self.lock = threading.Lock()  # guards the active model, gallery, auto, faces, thumbs, error
+        self._switch_lock = threading.Lock()  # one model switch at a time
+        self._identifiers: Dict[str, Identifier] = {}  # loaded once, kept for fast switching
+        self._thumbs_by_model: Dict[str, Dict[str, str]] = {}
+        self.latency: Dict[str, float] = {}
+        self.switch(cfg["identifier"])
         self.frame_ready = threading.Condition()
         self.jpeg: Optional[bytes] = None
         self.frame_no = 0
         self.faces: List[dict] = []
         self.learning: Dict[int, dict] = {}       # candidate key -> progress + thumbnail
-        self.thumbs: Dict[str, str] = {}          # person_id -> thumbnail, memory only, never saved
         self.fps = 0.0
         self._last_step = 0.0
         self.error: Optional[str] = None
+
+    # ---- model selection -----------------------------------------------
+
+    def switch(self, name: str) -> None:
+        """Make `name` the active backend, with its own gallery file and thresholds.
+        Half-learned faces are dropped; enrolled people stay in that model's gallery."""
+        with self._switch_lock:
+            if name not in self._identifiers:
+                self._identifiers[name] = build_identifier(name)  # slow: loads weights
+            settings = model_settings(self.cfg, name)
+            gallery = Gallery.load(settings["gallery_path"])
+            tap = _Tap(self._identifiers[name])
+            pipeline = Pipeline(tap, gallery, settings["recognize_threshold"], settings["unknown_threshold"])
+            auto = AutoEnroller(
+                gallery,
+                settings["gallery_path"],
+                same_threshold=settings["recognize_threshold"],
+                samples=int(self.cfg.get("auto_enroll_samples", 10)),
+                min_face_px=int(self.cfg.get("auto_enroll_min_face_px", 48)),
+            )
+            with self.lock:
+                self.identifier, self.settings = name, settings
+                self.tap, self.gallery, self.pipeline, self.auto = tap, gallery, pipeline, auto
+                self.thumbs = self._thumbs_by_model.setdefault(name, {})  # memory only, never saved
+                self.faces, self.learning, self.latency = [], {}, {}
+
+    def _record_latency(self, total_ms: float) -> None:
+        """Exponential moving averages of where the time of one frame goes (lock held)."""
+        t = dict(getattr(self.tap.inner, "last_timing", None) or {})
+        sample = {"pipeline_ms": total_ms}
+        if "detect_ms" in t:
+            sample["detect_ms"] = t["detect_ms"]
+            if t.get("faces"):
+                sample["embed_ms_per_face"] = t["embed_ms"] / t["faces"]
+        for k, v in sample.items():
+            old = self.latency.get(k)
+            self.latency[k] = v if old is None else 0.9 * old + 0.1 * v
 
     # ---- camera thread -------------------------------------------------
 
@@ -134,7 +164,9 @@ class Live:
 
         started = time.time()
         with self.lock:
+            t0 = time.perf_counter()
             results = self.pipeline.process(frame)
+            self._record_latency((time.perf_counter() - t0) * 1000)
             if self.auto_on:
                 progress = self.auto.update(self.tap.last, results, started)
             else:
@@ -211,7 +243,7 @@ class Live:
     def remove(self, person_id: str) -> None:
         with self.lock:
             self.gallery.remove(person_id)
-            self.gallery.save(self.cfg["gallery_path"])
+            self.gallery.save(self.settings["gallery_path"])
             self.thumbs.pop(person_id, None)
 
     def state(self) -> dict:
@@ -223,11 +255,31 @@ class Live:
                 "auto_enroll": self.auto_on,
                 "fps": round(self.fps, 1),
                 "error": self.error,
-                "identifier": self.cfg["identifier"],
+                "identifier": self.identifier,
+                "models": self.models(),
+                "latency": {k: round(v, 1) for k, v in self.latency.items()},
                 "source": self.cfg["source"],
-                "recognize_threshold": self.cfg["recognize_threshold"],
-                "unknown_threshold": self.cfg["unknown_threshold"],
+                "recognize_threshold": self.settings["recognize_threshold"],
+                "unknown_threshold": self.settings["unknown_threshold"],
             }
+
+    def models(self) -> List[dict]:
+        out = []
+        for name, info in COMPARED.items():
+            missing = missing_weights(info["files"])
+            out.append({"name": name, "label": info["label"], "dim": info["dim"], "about": info["about"],
+                        "available": not missing,
+                        "hint": f"python -m person_id.download_models --model {name}" if missing else None})
+        if self.identifier not in COMPARED:
+            out.append({"name": self.identifier, "label": self.identifier, "available": True})
+        return out
+
+    def bench(self) -> dict:
+        path = Path(self.cfg.get("bench_results", "data/bench/results.json"))
+        if not path.exists():
+            return {"error": f"No benchmark results at {path}. Run: python tools/bench_models.py "
+                             "--lfw data/bench/lfw --out data/bench/results.json"}
+        return json.loads(path.read_text())
 
 
 def make_handler(live: Live):
@@ -251,6 +303,10 @@ def make_handler(live: Live):
         def do_GET(self):
             if self.path == "/":
                 self._send(200, PAGE_PATH.read_bytes(), "text/html; charset=utf-8")
+            elif self.path == "/compare":
+                self._send(200, COMPARE_PATH.read_bytes(), "text/html; charset=utf-8")
+            elif self.path == "/api/bench":
+                self._json(200, live.bench())
             elif self.path == "/api/state":
                 self._json(200, live.state())
             elif self.path == "/stream.mjpg":
@@ -269,7 +325,10 @@ def make_handler(live: Live):
             try:
                 while True:
                     with live.frame_ready:
-                        if not live.frame_ready.wait_for(lambda: live.frame_no != seen, timeout=5):
+                        # jpeg is None until the camera delivers its first frame.
+                        if not live.frame_ready.wait_for(
+                            lambda: live.jpeg is not None and live.frame_no != seen, timeout=5
+                        ):
                             continue
                         seen, jpeg = live.frame_no, live.jpeg
                     self.wfile.write(
@@ -297,6 +356,18 @@ def make_handler(live: Live):
                 if not isinstance(body.get("enabled"), bool):
                     return self._json(400, {"error": "'enabled' must be true or false."})
                 live.set_auto(body["enabled"])
+                return self._json(200, {"ok": True})
+            if self.path == "/api/model":
+                name = str(body.get("name", ""))
+                info = {m["name"]: m for m in live.models()}.get(name)
+                if info is None:
+                    return self._json(400, {"error": f"Unknown model '{name}'."})
+                if not info["available"]:
+                    return self._json(400, {"error": f"Weights missing. On the robot run: {info['hint']}"})
+                try:
+                    live.switch(name)
+                except Exception as e:  # e.g. onnxruntime not installed
+                    return self._json(500, {"error": f"Could not load {name}: {type(e).__name__}: {e}"})
                 return self._json(200, {"ok": True})
             if self.path == "/api/remove":
                 pid = str(body.get("person_id", ""))
