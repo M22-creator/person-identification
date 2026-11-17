@@ -23,7 +23,11 @@
   @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
   .side { display: flex; flex-direction: column; gap: 18px; }
-  #video { width: 100%; display: block; border-radius: 6px; background: #000; aspect-ratio: 4 / 3; object-fit: contain; }
+  .videobox { position: relative; }
+  #video { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; aspect-ratio: 4 / 3; object-fit: contain; }
+  .videonote { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+               color: var(--dim); font-size: 15px; background: rgba(0, 0, 0, .55); border-radius: 6px; }
+  .videonote[hidden] { display: none; }
   .banner { margin: 0 0 12px; padding: 9px 12px; border-radius: 6px; font-size: 14px;
             border: 1px solid var(--warn); color: var(--warn); }
   .banner.err { border-color: var(--bad); color: #ff8d8d; }
@@ -112,7 +116,10 @@
     <p class="banner err" id="error" hidden></p>
     <p class="banner" id="dummy" hidden>The "dummy" identifier is active, so no face will ever be detected.
       Pick another recognition model at the top of the page.</p>
-    <img id="video" src="/stream.mjpg" alt="Live camera with a box around each detected face">
+    <div class="videobox">
+      <canvas id="video" width="640" height="480" role="img" aria-label="Live camera with a box around each detected face"></canvas>
+      <div class="videonote" id="videonote" role="status">Connecting to the camera...</div>
+    </div>
     <div class="legend">
       <span><span class="dot" style="background:var(--ok)"></span>recognized: matches an enrolled person</span>
       <span><span class="dot" style="background:var(--warn)"></span>uncertain: match too weak to trust</span>
@@ -353,6 +360,62 @@ $("rec").onclick = async () => {
     $("rec").innerHTML = "&#9679; Stop recording " + Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
   show(); recTimer = setInterval(show, 500);
 };
+
+// ---- live video: read the MJPEG stream ourselves, so a dropped connection (server restart,
+// network hiccup) is noticed and reconnected instead of freezing on the last frame ----
+const canvas = $("video"), ctx2d = canvas.getContext("2d");
+let lastFrameAt = 0, connectedAt = 0, framesDrawn = 0, streamCtrl = null, drawing = false;
+const indexOf = (buf, pat, from = 0) => {
+  outer: for (let i = from; i <= buf.length - pat.length; i++) {
+    for (let j = 0; j < pat.length; j++) if (buf[i + j] !== pat[j]) continue outer;
+    return i;
+  }
+  return -1;
+};
+const CRLF2 = [13, 10, 13, 10];
+async function drawFrame(jpeg) {
+  if (drawing) return;  // still decoding the previous frame: drop this one, never queue up delay
+  drawing = true;
+  try {
+    const bmp = await createImageBitmap(new Blob([jpeg], {type: "image/jpeg"}));
+    if (canvas.width !== bmp.width || canvas.height !== bmp.height) { canvas.width = bmp.width; canvas.height = bmp.height; }
+    ctx2d.drawImage(bmp, 0, 0); bmp.close();
+    lastFrameAt = Date.now(); framesDrawn++; $("videonote").hidden = true;
+  } catch (e) { /* a corrupt frame: skip it */ } finally { drawing = false; }
+}
+async function runStream() {
+  for (;;) {
+    streamCtrl = new AbortController(); connectedAt = Date.now(); lastFrameAt = 0;
+    try {
+      const r = await fetch("/stream.mjpg", {signal: streamCtrl.signal, cache: "no-store"});
+      const reader = r.body.getReader();
+      let buf = new Uint8Array(0);
+      for (;;) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        const merged = new Uint8Array(buf.length + value.length); merged.set(buf); merged.set(value, buf.length); buf = merged;
+        for (;;) {  // parts look like: --frame\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<N bytes>\r\n
+          const h = indexOf(buf, CRLF2);
+          if (h < 0) break;
+          const m = /Content-Length:\s*(\d+)/i.exec(new TextDecoder().decode(buf.subarray(0, h)));
+          if (!m) { buf = buf.slice(h + 4); continue; }
+          const start = h + 4, len = Number(m[1]);
+          if (buf.length < start + len) break;
+          drawFrame(buf.slice(start, start + len));
+          buf = buf.slice(start + len + 2);
+        }
+      }
+    } catch (e) { /* aborted by the watchdog or the connection dropped */ }
+    $("videonote").hidden = false; $("videonote").textContent = "Reconnecting to the camera...";
+    await new Promise(res => setTimeout(res, 1000));
+  }
+}
+setInterval(() => {  // watchdog: no frame for 3 s (or none at all 5 s after connecting) -> reconnect
+  const now = Date.now();
+  const stalled = lastFrameAt ? now - lastFrameAt > 3000 : connectedAt && now - connectedAt > 5000;
+  if (stalled && streamCtrl) streamCtrl.abort();
+}, 1000);
+runStream();
 
 async function tick() {
   try {
