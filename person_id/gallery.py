@@ -23,8 +23,23 @@ class Gallery:
     def person_ids(self):
         return sorted(self._people)
 
+    @property
+    def dim(self) -> Optional[int]:
+        """Embedding size of the enrolled samples, or None if empty."""
+        for embs in self._people.values():
+            return int(embs.shape[1])
+        return None
+
+    def _check_dim(self, e: np.ndarray) -> None:
+        if self.dim is not None and e.shape[-1] != self.dim:
+            raise ValueError(
+                f"Gallery holds {self.dim}-D embeddings but got a {e.shape[-1]}-D one: "
+                "it was built with a different identifier. Use that backend's own gallery_path."
+            )
+
     def add(self, person_id: str, embedding: np.ndarray) -> None:
         e = _normalize(embedding).reshape(1, -1)
+        self._check_dim(e)
         if person_id in self._people:
             self._people[person_id] = np.vstack([self._people[person_id], e])
         else:
@@ -38,6 +53,7 @@ class Gallery:
         if not self._people:
             return None, 0.0
         q = _normalize(embedding)
+        self._check_dim(q)
         best_id, best = None, -1.0
         for pid, embs in self._people.items():
             score = float(np.max(embs @ q))
