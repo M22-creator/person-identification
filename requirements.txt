@@ -1,6 +1,6 @@
 numpy
 pyyaml
-opencv-python
+opencv-python>=4.8   # also runs the sface backend (YuNet + SFace)
 # Optional, install only where needed:
 # pyrealsense2        # RealSense D435i input
-# <your face model>   # e.g. insightface + onnxruntime
+# pytest              # tests

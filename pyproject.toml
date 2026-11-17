@@ -6,7 +6,7 @@ requires-python = ">=3.8"
 dependencies = ["numpy", "pyyaml"]
 
 [project.optional-dependencies]
-camera = ["opencv-python"]
+camera = ["opencv-python>=4.8"]
 realsense = ["pyrealsense2"]
 dev = ["pytest"]
 

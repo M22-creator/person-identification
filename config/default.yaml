@@ -1,14 +1,21 @@
-# Which identifier backend to use. "dummy" detects nobody; replace with your own.
-identifier: dummy
+# Which identifier backend to use:
+#   sface  - OpenCV YuNet detector + SFace embedding (weights: python -m person_id.download_models)
+#   dummy  - detects nobody (for tests / wiring)
+identifier: sface
 
 # Where enrolled embeddings are stored (git-ignored).
 gallery_path: data/gallery.npz
 
-# Cosine-similarity thresholds. PLACEHOLDERS: tune on your own model and data.
+# Cosine-similarity thresholds for the sface backend.
 #   score >= recognize_threshold            -> recognized
 #   score <  unknown_threshold              -> unknown
 #   in between                              -> uncertain
-recognize_threshold: 0.50
+# Tuned on LFW (6000 pairs, tools/bench_lfw.py; 10-fold accuracy 99.33%):
+#   0.40 -> FAR 0.03% / TAR 97.6% per pair (conservative: the gallery match takes
+#           the max over all enrolled samples, which raises the real FAR)
+#   0.30 -> only 0.8% of same-person pairs score lower
+# LFW is web photos; re-check on robot-camera footage before relying on them.
+recognize_threshold: 0.40
 unknown_threshold: 0.30
 
 # Camera: "realsense", a device index like "0", or a video file path.
