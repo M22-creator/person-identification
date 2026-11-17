@@ -28,10 +28,12 @@ import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
 from .auto_enroll import AutoEnroller, Progress
+from .avatars import avatar_svg
 from ..camera import open_source
 from ..config import DEFAULT_PATH, load_config, model_settings
 from ..gallery import Gallery
@@ -39,14 +41,15 @@ from ..identifier import COMPARED, Identifier, build_identifier, missing_weights
 from ..pipeline import Pipeline
 from ..publishers import build_publisher
 from ..types import Detection, IdentityResult, Status
+from ..visits import VisitLog
 
 PAGE_PATH = Path(__file__).with_name("index.html")
 # How people are pictured in the side lists (the live video always shows the camera):
-#   identicon - a pixel-grid pattern drawn by the page from the person_id; no face image
-#               is cropped or sent at all (default)
+#   avatar    - one of ten pixel-art animals (avatars.py), chosen from the person_id only;
+#               no face image is cropped or sent at all (default; "identicon" is an old alias)
 #   pixelate  - the face crop reduced to a 6x6 mosaic
 #   photo     - the face crop itself
-THUMB_MODES = ("identicon", "pixelate", "photo")
+THUMB_MODES = ("avatar", "pixelate", "photo")
 COMPARE_PATH = Path(__file__).with_name("compare.html")
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
@@ -91,7 +94,7 @@ class Live:
         self.loop = loop
         self.publisher = publisher
         self.auto_on = bool(cfg.get("auto_enroll", True))
-        self.thumb_mode = cfg.get("thumbnails", "identicon")
+        self.thumb_mode = {"identicon": "avatar"}.get(cfg.get("thumbnails", "avatar"), cfg.get("thumbnails", "avatar"))
         if self.thumb_mode not in THUMB_MODES:
             raise ValueError(f"thumbnails must be one of {THUMB_MODES}, got '{self.thumb_mode}'")
         self.lock = threading.Lock()  # guards the active model, gallery, auto, faces, thumbs, error
@@ -131,6 +134,9 @@ class Live:
             with self.lock:
                 self.identifier, self.settings = name, settings
                 self.tap, self.gallery, self.pipeline, self.auto = tap, gallery, pipeline, auto
+                # Interaction history lives next to this model's gallery.
+                self.visits = VisitLog(VisitLog.path_for(settings["gallery_path"]),
+                                       gap_s=float(self.cfg.get("visit_gap_s", 10.0)))
                 self.thumbs = self._thumbs_by_model.setdefault(name, {})  # memory only, never saved
                 self.faces, self.learning, self.latency = [], {}, {}
 
@@ -181,6 +187,12 @@ class Live:
             else:
                 progress = [None] * len(results)
             live_keys = {c.key for c in self.auto.candidates}
+            # Interaction history: recognized people, plus anyone enrolled on this frame.
+            scores = {r.person_id: r.confidence for r in results if r.status is Status.RECOGNIZED}
+            enrolled = {p.enrolled_as for p in progress if p is not None and p.enrolled_as}
+            for pid in enrolled:
+                scores.setdefault(pid, None)
+            self.visits.seen(scores, started, enrolled)
         if self.publisher:
             self.publisher.publish(results)
 
@@ -226,8 +238,8 @@ class Live:
                 self.frame_ready.notify_all()
 
     def _thumb(self, frame: np.ndarray, bbox) -> Optional[str]:
-        if self.thumb_mode == "identicon":
-            return None  # nothing of the face leaves the camera loop; the page draws a pattern
+        if self.thumb_mode == "avatar":
+            return None  # nothing of the face leaves the camera loop; the page shows /avatar.svg
         import cv2
 
         h, w = frame.shape[:2]
@@ -260,13 +272,21 @@ class Live:
             self.gallery.remove(person_id)
             self.gallery.save(self.settings["gallery_path"])
             self.thumbs.pop(person_id, None)
+            self.visits.remove(person_id)  # removing someone removes their history too
+
+    def person(self, person_id: str) -> Optional[dict]:
+        with self.lock:
+            if person_id not in self.gallery.person_ids:
+                return None
+            return {"id": person_id, "identifier": self.identifier, **self.visits.history(person_id)}
 
     def state(self) -> dict:
         with self.lock:
             return {
                 "faces": self.faces,
                 "learning": sorted(self.learning.values(), key=lambda c: c["key"]),
-                "people": [{"id": p, "thumb": self.thumbs.get(p)} for p in self.gallery.person_ids],
+                "people": [{"id": p, "thumb": self.thumbs.get(p), **self.visits.summary(p)}
+                           for p in self.gallery.person_ids],
                 "auto_enroll": self.auto_on,
                 "thumbnails": self.thumb_mode,
                 "fps": round(self.fps, 1),
@@ -317,6 +337,18 @@ def make_handler(live: Live):
             self._send(code, json.dumps(obj).encode(), "application/json")
 
         def do_GET(self):
+            url = urlparse(self.path)
+            if url.path == "/avatar.svg":
+                pid = parse_qs(url.query).get("id", [""])[0]
+                if not ID_PATTERN.match(pid):
+                    return self._json(400, {"error": "Invalid ID."})
+                return self._send(200, avatar_svg(pid).encode(), "image/svg+xml")
+            if url.path == "/api/person":
+                pid = parse_qs(url.query).get("id", [""])[0]
+                if not ID_PATTERN.match(pid):
+                    return self._json(400, {"error": "Invalid ID."})
+                info = live.person(pid)
+                return self._json(200, info) if info else self._json(404, {"error": f"'{pid}' is not enrolled."})
             if self.path == "/":
                 self._send(200, PAGE_PATH.read_bytes(), "text/html; charset=utf-8")
             elif self.path == "/compare":

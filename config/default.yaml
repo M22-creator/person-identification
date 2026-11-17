@@ -43,10 +43,16 @@ auto_enroll_samples: 10
 auto_enroll_min_face_px: 48   # ignore faces smaller than this
 
 # Web view: how people are pictured in its side lists. The live video always shows the camera.
-#   identicon - pixel-grid pattern generated from the person_id; no face image is cropped or sent
+#   avatar    - one of ten original pixel-art animals, chosen from the person_id only
+#               (person_1 = fox, person_2 = bee, ...); no face image is cropped or sent
 #   pixelate  - 6x6 mosaic of the face crop (may still be recognizable to people who know them)
 #   photo     - the face crop itself
-thumbnails: identicon
+thumbnails: avatar
+
+# Web view: interaction history per enrolled person (stored next to the gallery, e.g.
+# data/gallery.visits.json). A visit ends once the person has not been recognized for
+# this many seconds; coming back later starts a new visit.
+visit_gap_s: 10
 
 # Camera: "realsense", a device index like "0", or a video file path.
 source: "0"

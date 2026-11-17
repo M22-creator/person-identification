@@ -54,6 +54,37 @@
             border-top: 1px solid var(--line); }
   .person:first-of-type { border-top: 0; }
   .person button { padding: 3px 10px; font-size: 13px; }
+  .person .who { display: flex; align-items: center; min-width: 0; }
+  button.link { background: none; border: 0; padding: 2px 0; color: var(--text); font-weight: 600; text-align: left;
+                text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+  button.link:hover { text-decoration-color: var(--accent); }
+  .person .sub, table.visits .sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+           padding: 0; width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  .dhead { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .dhead img { width: 48px; height: 48px; border-radius: 6px; image-rendering: pixelated; }
+  .dhead h2 { margin: 0; font-size: 18px; color: var(--text); text-transform: none; letter-spacing: 0; }
+  .dhead button { margin-left: auto; }
+  .dbody { padding: 14px 18px 18px; overflow-y: auto; max-height: calc(100vh - 160px); }
+  .dstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+  @media (max-width: 560px) { .dstats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .dstats .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dstats .k { color: var(--dim); font-size: 12px; }
+  table.visits { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+  table.visits th, table.visits td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  table.visits th:first-child, table.visits td:first-child, table.visits th:nth-child(2), table.visits td:nth-child(2) { text-align: left; }
+  table.visits thead th { color: var(--dim); font-weight: 600; }
+  .now { color: var(--ok); font-weight: 600; }
+  #rec { padding: 5px 12px; font-size: 14px; }
+  #rec.on { background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 600; }
+  #rec.on::first-letter { animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) { #rec.on::first-letter { animation: none; } }
+  .person.inview { background: rgba(90, 200, 90, .10); box-shadow: inset 3px 0 0 var(--ok); border-radius: 6px;
+                   padding-left: 10px; padding-right: 6px; }
+  .person.inview .sub { color: var(--ok); font-weight: 600; }
+  .person.inview .sub::before { content: "\25CF  "; }
   .controls { display: flex; gap: 14px; align-items: center; margin-left: auto; flex-wrap: wrap; }
   .controls label { color: var(--dim); font-size: 13px; }
   select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
@@ -71,6 +102,8 @@
     <label for="model">Recognition model<select id="model" aria-describedby="modelnote"></select></label>
     <span id="modelnote" class="switching" role="status"></span>
     <a href="/compare">Compare models &rarr;</a>
+    <button type="button" id="rec" title="Record this page as a video, saved to your computer">&#9679; Record demo</button>
+    <span id="recnote" class="switching" role="status"></span>
   </div>
 </header>
 <main>
@@ -105,6 +138,12 @@
     </section>
   </div>
 </main>
+<dialog id="person" aria-labelledby="ptitle">
+  <div class="dhead"><img id="pimg" alt=""><div><h2 id="ptitle"></h2><div class="meta" id="pmodel"></div></div>
+    <button type="button" id="pclose">Close</button></div>
+  <div class="dbody"><div class="dstats" id="pstats"></div><div id="ptable"></div>
+    <p class="note" id="pnote"></p></div>
+</dialog>
 <script>
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -112,31 +151,14 @@ let armed = null;      // ID whose Remove button was clicked once
 let autoOn = true;
 let switching = false;
 
-// Pixel-grid avatar ("identicon") generated from the person_id: the same ID always gives the
-// same pattern, and it contains nothing of the person's face.
+// Pixel-art avatar chosen by the server from the person_id (person_id/web/avatars.py).
+// It contains nothing of the person's face.
 const svgUrl = svg => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-const iconCache = {};
-function identicon(id) {
-  if (iconCache[id]) return iconCache[id];
-  let h = 2166136261;  // FNV-1a
-  for (const ch of id) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
-  let bits = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
-  if (bits.toString(2).split("1").length - 1 < 6) bits = ~bits >>> 0;  // avoid near-empty grids
-  const fill = `hsl(${h % 360}, 62%, 58%)`;
-  let cells = "";
-  for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
-    if ((bits >>> (y * 3 + x)) & 1) {
-      cells += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
-      if (x < 2) cells += `<rect x="${4 - x}" y="${y}" width="1" height="1"/>`;
-    }
-  }
-  return (iconCache[id] = svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.75 -0.75 6.5 6.5" shape-rendering="crispEdges">` +
-    `<rect x="-0.75" y="-0.75" width="6.5" height="6.5" fill="#2a2f38"/><g fill="${fill}">${cells}</g></svg>`));
-}
+const avatar = id => "/avatar.svg?id=" + encodeURIComponent(id);
 // Neutral tile for faces that have no ID yet ("?" not enrolled, "+" being learned).
 const placeholder = sym => svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#2a2f38"/>` +
   `<text x="32" y="44" font-family="system-ui, sans-serif" font-size="32" font-weight="600" text-anchor="middle" fill="#9aa3ae">${sym}</text></svg>`);
-const pictureFor = (thumb, id, sym) => thumb || (id ? identicon(id) : placeholder(sym));
+const pictureFor = (thumb, id, sym) => thumb || (id ? avatar(id) : placeholder(sym));
 
 function renderModels(models, current) {
   const sel = $("model");
@@ -186,13 +208,19 @@ function renderFaces(faces) {
   }
 }
 
-function renderPeople(people) {
+function renderPeople(people, inView) {
   const box = $("people"); box.replaceChildren();
   if (!people.length) { box.append(el("p", "empty", "Nobody enrolled yet.")); return; }
-  for (const {id, thumb} of people) {
-    const row = el("div", "person"); const name = el("span");
+  for (const p of people) {
+    const {id, thumb} = p;
+    const here = inView.has(id);
+    const row = el("div", "person" + (here ? " inview" : "")); const name = el("div", "who");
     const img = el("img"); img.alt = ""; img.src = pictureFor(thumb, id); name.append(img);
-    name.append(id); row.append(name);
+    const txt = el("div"); const link = el("button", "link", id); link.type = "button";
+    link.title = "Show the interaction history of " + id; link.onclick = () => openPerson(id);
+    const sub = here ? "in view now" : (p.last_seen ? "last seen " + ago(p.last_seen) : "not seen yet");
+    txt.append(link, el("div", "sub", (p.visits || 0) + (p.visits === 1 ? " visit" : " visits") + " · " + sub));
+    name.append(txt); row.append(name);
     const b = el("button", "danger", armed === id ? "Click again to delete" : "Remove");
     b.type = "button";
     b.onclick = async () => {
@@ -223,6 +251,107 @@ function renderLearning(list, on) {
   }
 }
 
+// ---- time formatting ----
+const ago = ts => { const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return Math.round(s) + " s ago"; if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago"; return Math.round(s / 86400) + " days ago"; };
+const when = ts => { const d = new Date(ts * 1000), today = new Date().toDateString() === d.toDateString();
+  return (today ? "today " : d.toLocaleDateString() + " ") + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}); };
+const dur = s => s < 60 ? s.toFixed(0) + " s" : s < 3600 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s" : (s / 3600).toFixed(1) + " h";
+
+// ---- interaction history dialog ----
+let openId = null, refreshTimer = null;
+async function openPerson(id) {
+  openId = id;
+  await renderPerson();
+  if (!$("person").open) $("person").showModal();
+  clearInterval(refreshTimer); refreshTimer = setInterval(renderPerson, 2000);  // live while open
+}
+async function renderPerson() {
+  if (!openId) return;
+  const r = await fetch("/api/person?id=" + encodeURIComponent(openId));
+  const d = await r.json();
+  if (!r.ok) { $("ptitle").textContent = openId; $("pstats").replaceChildren(); $("ptable").replaceChildren(el("p", "empty", d.error || "Not found."));
+    $("pnote").textContent = ""; return; }
+  $("pimg").src = avatar(d.id); $("ptitle").textContent = d.id;
+  $("pmodel").textContent = "history for recognition model " + d.identifier;
+  const stat = (k, v) => { const x = el("div"); x.append(el("div", "v", v), el("div", "k", k)); return x; };
+  $("pstats").replaceChildren(
+    stat("visits", String(d.visits)),
+    stat("first seen", d.first_seen ? when(d.first_seen) : "-"),
+    stat("last seen", d.in_view_now ? "now (visit ongoing)" : d.last_seen ? ago(d.last_seen) : "-"),
+    stat("time in view", dur(d.total_in_view_s)));
+  const box = $("ptable"); box.replaceChildren();
+  if (!d.history.length) { box.append(el("p", "empty", "No visits recorded yet.")); }
+  else {
+    const t = el("table", "visits"), hr = el("tr");
+    for (const h of ["#", "started", "duration", "frames", "mean score", "best"]) hr.append(el("th", null, h));
+    const head = el("thead"); head.append(hr); t.append(head);
+    const body = el("tbody");
+    d.history.forEach((v, i) => {
+      const tr = el("tr");
+      tr.append(el("td", null, String(d.history.length - i)));
+      const st = el("td", null, when(v.start));
+      if (v.ongoing) { st.append(" "); st.append(el("span", "now", "· ongoing")); }
+      if (v.enrolled) st.append(el("span", "sub", " · first visit, enrolled"));
+      tr.append(st, el("td", null, dur(v.duration_s)), el("td", null, String(v.frames)),
+        el("td", null, v.mean_score == null ? "-" : v.mean_score.toFixed(2)), el("td", null, v.best_score == null ? "-" : v.best_score.toFixed(2)));
+      body.append(tr);
+    });
+    t.append(body); box.append(t);
+  }
+  $("pnote").textContent = "A visit ends when " + d.id + " has not been recognized for " + d.gap_s +
+    " s. Only confident matches (recognized) count. Removing this person also deletes this history.";
+}
+function closePerson() { openId = null; clearInterval(refreshTimer); if ($("person").open) $("person").close(); }
+$("pclose").onclick = closePerson;
+$("person").addEventListener("close", () => { openId = null; clearInterval(refreshTimer); });
+$("person").addEventListener("click", ev => { if (ev.target === $("person")) closePerson(); });  // click outside
+// A link like /#person=person_1 opens that person's history directly.
+if (location.hash.startsWith("#person=")) openPerson(decodeURIComponent(location.hash.slice(8)));
+
+// ---- record this page as a video (saved on this computer; nothing is stored on the robot) ----
+let recorder = null, recTimer = null;
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+$("rec").onclick = async () => {
+  if (recorder) { recorder.stop(); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || !window.MediaRecorder) {
+    $("recnote").textContent = "This browser cannot record a tab; use Chrome or Edge, or the OS screen recorder.";
+    return;
+  }
+  let stream;
+  try {
+    // Chrome/Edge offer "this tab" first; other browsers show their usual picker.
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {frameRate: 30, displaySurface: "browser"}, audio: false,
+      preferCurrentTab: true, selfBrowserSurface: "include", surfaceSwitching: "exclude",
+    });
+  } catch (e) {
+    $("recnote").textContent = e.name === "NotAllowedError" ? "Recording cancelled." : "Cannot record: " + e.message;
+    return;
+  }
+  const type = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"]
+    .find(t => MediaRecorder.isTypeSupported(t)) || "";
+  const chunks = [], started = Date.now(), name = "ava-demo-" + stamp();
+  recorder = new MediaRecorder(stream, type ? {mimeType: type, videoBitsPerSecond: 6000000} : undefined);
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    clearInterval(recTimer); stream.getTracks().forEach(t => t.stop());
+    const mime = recorder.mimeType || "video/webm", ext = mime.includes("mp4") ? "mp4" : "webm";
+    const url = URL.createObjectURL(new Blob(chunks, {type: mime}));
+    const a = document.createElement("a"); a.href = url; a.download = name + "." + ext; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    $("recnote").textContent = "Saved " + name + "." + ext + " to your Downloads folder.";
+    $("rec").classList.remove("on"); $("rec").innerHTML = "&#9679; Record demo"; recorder = null;
+  };
+  stream.getVideoTracks()[0].addEventListener("ended", () => { if (recorder && recorder.state !== "inactive") recorder.stop(); });
+  recorder.start(1000);
+  $("rec").classList.add("on"); $("recnote").textContent = "";
+  const show = () => { const t = Math.floor((Date.now() - started) / 1000);
+    $("rec").innerHTML = "&#9679; Stop recording " + Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+  show(); recTimer = setInterval(show, 500);
+};
+
 async function tick() {
   try {
     const s = await (await fetch("/api/state")).json();
@@ -233,7 +362,7 @@ async function tick() {
     renderModels(s.models || [], s.identifier);
     $("error").hidden = !s.error; $("error").textContent = s.error || "";
     $("dummy").hidden = s.identifier !== "dummy";
-    renderFaces(s.faces); renderPeople(s.people); renderLearning(s.learning, s.auto_enroll);
+    renderFaces(s.faces); renderPeople(s.people, new Set(s.faces.filter(f => f.status === "recognized").map(f => f.person_id))); renderLearning(s.learning, s.auto_enroll);
   } catch (e) {
     $("meta").textContent = "Lost connection to the server.";
   }

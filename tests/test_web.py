@@ -126,9 +126,9 @@ def _faces_after_step(live, frame):
     return live.state()["faces"]
 
 
-def test_identicon_mode_sends_no_face_image(live):
-    # Default mode: nothing of the face is cropped or sent; the page draws a pattern from the ID.
-    assert live.state()["thumbnails"] == "identicon"
+def test_avatar_mode_sends_no_face_image(live):
+    # Default mode: nothing of the face is cropped or sent; the page shows /avatar.svg for the ID.
+    assert live.state()["thumbnails"] == "avatar"
     frame = np.random.default_rng(0).integers(0, 256, (120, 160, 3), dtype=np.uint8)
     faces = _faces_after_step(live, frame)
     assert faces and all(f["thumb"] is None for f in faces)
@@ -156,3 +156,48 @@ def test_photo_mode_and_bad_mode(live, tmp_path):
     cfg = dict(live.cfg, thumbnails="faces")
     with pytest.raises(ValueError, match="thumbnails"):
         server.Live(cfg)
+
+
+def test_interaction_history_api(live):
+    import time
+
+    live.gallery.add("alice", np.ones(128))
+    frame = np.zeros((48, 64, 3), np.uint8)
+    live._step(frame)  # Fake returns ones(128): alice is recognized (cosine 1.0)
+    people = {p["id"]: p for p in live.state()["people"]}
+    assert people["alice"]["visits"] == 1 and people["alice"]["in_view_now"]
+    httpd, base = _serve(live)
+    try:
+        with urllib.request.urlopen(base + "/api/person?id=alice") as r:
+            h = json.loads(r.read())
+        assert h["id"] == "alice" and h["visits"] == 1 and h["history"][0]["ongoing"]
+        assert h["identifier"] == "sface"
+        for bad, code in (("nobody", 404), ("../etc", 400)):
+            try:
+                urllib.request.urlopen(base + "/api/person?id=" + bad)
+                assert False
+            except urllib.error.HTTPError as e:
+                assert e.code == code
+        assert _post(base + "/api/remove", {"person_id": "alice"})[0] == 200
+        assert live.visits.summary("alice")["visits"] == 0  # history removed with the person
+    finally:
+        httpd.shutdown()
+
+
+def test_old_identicon_setting_still_works(live):
+    assert server.Live(dict(live.cfg, thumbnails="identicon")).thumb_mode == "avatar"
+
+
+def test_avatar_endpoint(live):
+    httpd, base = _serve(live)
+    try:
+        with urllib.request.urlopen(base + "/avatar.svg?id=person_2") as r:
+            assert r.headers["Content-Type"] == "image/svg+xml"
+            assert b"<title>bee</title>" in r.read()
+        try:
+            urllib.request.urlopen(base + "/avatar.svg?id=%3Cscript%3E")
+            assert False
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+    finally:
+        httpd.shutdown()
