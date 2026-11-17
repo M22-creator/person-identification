@@ -45,6 +45,9 @@ YUNET_FILE = "face_detection_yunet_2023mar.onnx"
 SFACE_FILE = "face_recognition_sface_2021dec.onnx"
 ARCFACE_R50_FILE = "arcface_w600k_r50.onnx"
 ARCFACE_MBF_FILE = "arcface_w600k_mbf.onnx"
+# CPU threads per model. Kept low on purpose: on the robot computer the navigation
+# and sensor stack must not be starved. 0 = library default (all cores).
+THREADS = int(os.environ.get("PERSON_ID_THREADS", "4"))
 
 # 5-point template of the standard 112x112 ArcFace crop (insightface face_align.arcface_dst),
 # in YuNet's landmark order: right eye, left eye, nose tip, right mouth corner, left mouth corner.
@@ -100,6 +103,8 @@ class YuNetBackend(Identifier):
                 f"Missing model file(s) {missing} in {d}. "
                 f"Run: python -m person_id.download_models --model {self.name}"
             )
+        if THREADS:
+            cv2.setNumThreads(THREADS)
         self._cv2 = cv2
         self.model_dir = d
         self.min_face = min_face
@@ -170,7 +175,7 @@ class ArcFaceOnnxIdentifier(YuNetBackend):
 
     weight_file = ""
 
-    def __init__(self, model_dir: Optional[os.PathLike] = None, threads: int = 0, **kw) -> None:
+    def __init__(self, model_dir: Optional[os.PathLike] = None, threads: int = THREADS, **kw) -> None:
         self.weight_files = [self.weight_file]
         super().__init__(model_dir, **kw)
         import onnxruntime as ort
@@ -178,6 +183,7 @@ class ArcFaceOnnxIdentifier(YuNetBackend):
         opts = ort.SessionOptions()
         if threads:
             opts.intra_op_num_threads = threads
+            opts.inter_op_num_threads = 1
         self.session = ort.InferenceSession(
             str(self.model_dir / self.weight_file), opts, providers=["CPUExecutionProvider"]
         )

@@ -210,6 +210,8 @@ def main() -> None:
             "opencv": cv2.__version__,
             "onnxruntime": onnxruntime.__version__,
             "execution": "CPU (OpenCV DNN for YuNet/SFace, onnxruntime CPUExecutionProvider for ArcFace)",
+            "threads": __import__("person_id.identifier", fromlist=["THREADS"]).THREADS,
+            "niceness": os.nice(0),
             "started": time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(started)),
             "seconds": round(time.time() - started, 1),
             "lfw_pairs": len(pairs),
