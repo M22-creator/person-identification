@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVA person identification</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1d2026; --line: #2e333c; --text: #e8eaed; --dim: #9aa3ae;
+    --ok: #5ac85a; --warn: #f0be00; --bad: #eb4646; --accent: #6aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; color: var(--dim);
+       text-transform: uppercase; letter-spacing: .06em; }
+  .meta { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+         gap: 18px; padding: 18px 20px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .side { display: flex; flex-direction: column; gap: 18px; }
+  #video { width: 100%; display: block; border-radius: 6px; background: #000; aspect-ratio: 4 / 3; object-fit: contain; }
+  .banner { margin: 0 0 12px; padding: 9px 12px; border-radius: 6px; font-size: 14px;
+            border: 1px solid var(--warn); color: var(--warn); }
+  .banner.err { border-color: var(--bad); color: #ff8d8d; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; color: var(--dim); font-size: 13px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+  .empty { color: var(--dim); font-size: 14px; margin: 0; }
+  .face { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .face:first-of-type { border-top: 0; padding-top: 0; }
+  .face img { height: 64px; width: 64px; object-fit: cover; border-radius: 6px; background: #000; }
+  .face .name { font-weight: 600; }
+  .tag { font-size: 12px; padding: 1px 7px; border-radius: 10px; border: 1px solid; margin-left: 6px; }
+  .recognized { color: var(--ok); } .uncertain { color: var(--warn); } .unknown { color: #ff7b7b; }
+  .note { margin: 0 0 12px; color: var(--dim); font-size: 14px; }
+  .learning { color: var(--accent); }
+  .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .head h2 { margin: 0; }
+  .head button { padding: 3px 10px; font-size: 13px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: #2a2f38; color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08172e; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.danger { color: #ff8d8d; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; width: 160px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .2s; }
+  .person img { height: 36px; width: 36px; object-fit: cover; border-radius: 4px; margin-right: 10px; vertical-align: middle; }
+  .person { display: flex; justify-content: space-between; align-items: center; padding: 6px 0;
+            border-top: 1px solid var(--line); }
+  .person:first-of-type { border-top: 0; }
+  .person button { padding: 3px 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AVA person identification</h1>
+  <span class="meta" id="meta">connecting...</span>
+</header>
+<main>
+  <section class="panel">
+    <p class="banner err" id="error" hidden></p>
+    <p class="banner" id="dummy" hidden>The "dummy" identifier is active, so no face will ever be detected.
+      Start with <code>--identifier insightface</code>.</p>
+    <img id="video" src="/stream.mjpg" alt="Live camera with a box around each detected face">
+    <div class="legend">
+      <span><span class="dot" style="background:var(--ok)"></span>recognized: matches an enrolled person</span>
+      <span><span class="dot" style="background:var(--warn)"></span>uncertain: match too weak to trust</span>
+      <span><span class="dot" style="background:var(--bad)"></span>unknown: not enrolled</span>
+      <span><span class="dot" style="background:var(--accent)"></span>new face: being learned</span>
+    </div>
+  </section>
+
+  <div class="side">
+    <section class="panel">
+      <h2>In view now</h2>
+      <div id="faces"><p class="empty">Nobody in view.</p></div>
+    </section>
+
+    <section class="panel">
+      <div class="head"><h2>Learning new faces</h2><button type="button" id="auto"></button></div>
+      <p class="note" id="autonote"></p>
+      <div id="learning"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Enrolled people</h2>
+      <div id="people"><p class="empty">Nobody enrolled yet.</p></div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let armed = null;      // ID whose Remove button was clicked once
+let autoOn = true;
+
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  return r.ok ? null : (j.error || "Request failed.");
+}
+
+function renderFaces(faces) {
+  const box = $("faces"); box.replaceChildren();
+  if (!faces.length) { box.append(el("p", "empty", "Nobody in view.")); return; }
+  for (const f of faces) {
+    const row = el("div", "face");
+    const img = el("img"); img.alt = ""; if (f.thumb) img.src = f.thumb; row.append(img);
+    const info = el("div");
+    const top = el("div");
+    top.append(el("span", "name", f.person_id || (f.status === "unknown" ? "Not enrolled" : "Not sure")));
+    top.append(el("span", "tag " + f.status, f.status));
+    if (f.learning) top.append(el("span", "tag learning", f.learning.enrolled_as ? "saved as " + f.learning.enrolled_as : "learning"));
+    info.append(top, el("div", "meta", "match score " + f.confidence.toFixed(2)));
+    row.append(info); box.append(row);
+  }
+}
+
+function renderPeople(people) {
+  const box = $("people"); box.replaceChildren();
+  if (!people.length) { box.append(el("p", "empty", "Nobody enrolled yet.")); return; }
+  for (const {id, thumb} of people) {
+    const row = el("div", "person"); const name = el("span");
+    if (thumb) { const img = el("img"); img.alt = ""; img.src = thumb; name.append(img); }
+    name.append(id); row.append(name);
+    const b = el("button", "danger", armed === id ? "Click again to delete" : "Remove");
+    b.type = "button";
+    b.onclick = async () => {
+      if (armed !== id) { armed = id; setTimeout(() => { if (armed === id) armed = null; }, 4000); return; }
+      armed = null; await post("/api/remove", {person_id: id});
+    };
+    row.append(b); box.append(row);
+  }
+}
+
+function renderLearning(list, on) {
+  autoOn = on;
+  $("auto").textContent = on ? "Pause" : "Resume";
+  $("autonote").textContent = on
+    ? "A face that is not enrolled is saved automatically once it has been seen clearly for a few seconds."
+    : "Paused. New faces are shown as unknown and nothing is saved.";
+  const box = $("learning"); box.replaceChildren();
+  if (!on) return;
+  if (!list.length) { box.append(el("p", "empty", "No new faces right now.")); return; }
+  for (const c of list) {
+    const row = el("div", "face");
+    const img = el("img"); img.alt = ""; if (c.thumb) img.src = c.thumb; row.append(img);
+    const info = el("div");
+    info.append(el("div", "name", "New face"));
+    const bar = el("div", "bar"), fill = el("div"); fill.style.width = Math.round(100 * c.taken / c.target) + "%"; bar.append(fill);
+    info.append(bar, el("div", "meta", c.taken + " of " + c.target + " samples"));
+    row.append(info); box.append(row);
+  }
+}
+
+async function tick() {
+  try {
+    const s = await (await fetch("/api/state")).json();
+    $("meta").textContent = "source " + s.source + " | " + s.identifier + " | " + s.fps + " fps | recognized at " + s.recognize_threshold + ", unknown below " + s.unknown_threshold;
+    $("error").hidden = !s.error; $("error").textContent = s.error || "";
+    $("dummy").hidden = s.identifier !== "dummy";
+    renderFaces(s.faces); renderPeople(s.people); renderLearning(s.learning, s.auto_enroll);
+  } catch (e) {
+    $("meta").textContent = "Lost connection to the server.";
+  }
+  setTimeout(tick, 400);
+}
+
+$("auto").onclick = () => post("/api/auto", {enabled: !autoOn});
+tick();
+</script>
+</body>
+</html>

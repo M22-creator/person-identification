@@ -34,7 +34,9 @@ real system. Read README.md first.
 - Never send robot motion commands (e.g. anything under `/robot/drive/`).
   Read-only status calls are fine.
 - Never commit anything in `data/`, face images, or videos of people.
-- Never auto-enroll unknown people. `uncertain` results carry no `person_id`.
+- Auto-enrollment exists only in `person_id.web` (`auto_enroll` config), for
+  experiments where every participant agreed beforehand (Hongxuan, Nov 2026).
+  `person_id.run` must never enroll. `uncertain` results carry no `person_id`.
 - Keep the output schema in README.md stable; other modules depend on it.
   If it must change, tell Hongxuan so she can inform the team.
 - Show Hongxuan each command before running it on the robot computer.

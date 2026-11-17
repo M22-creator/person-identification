@@ -3,4 +3,6 @@ pyyaml
 opencv-python>=4.8   # also runs the sface backend (YuNet + SFace)
 # Optional, install only where needed:
 # pyrealsense2        # RealSense D435i input
+# insightface         # "insightface" identifier backend (SCRFD + ArcFace)
+# onnxruntime         # needed by insightface; use onnxruntime-gpu on a CUDA machine
 # pytest              # tests

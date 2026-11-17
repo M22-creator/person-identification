@@ -16,6 +16,7 @@ on the robot.
 | `person_id/gallery.py` | Enrolled people and cosine matching | No |
 | `person_id/pipeline.py` | recognized / unknown / uncertain / no_person logic | No |
 | `person_id/camera.py` | RealSense, webcam, or video file input | Maybe (RealSense untested) |
+| `person_id/web/` | Live web view: `server.py`, `auto_enroll.py` (saves new faces), `index.html` | No |
 | `person_id/publishers.py` | Output as JSON lines or a ROS 2 topic | Maybe (ROS 2 untested) |
 | `config/default.yaml` | Thresholds, camera, output settings | Tune thresholds |
 
@@ -55,8 +56,22 @@ One JSON list per frame, one entry per person (or a single `no_person` entry):
 | `uncertain` | match too weak to trust | null |
 | `no_person` | nobody in frame | null |
 
-Downstream modules should only act on `recognized`. Unknown people are never
-enrolled automatically.
+Downstream modules should only act on `recognized`. `person_id.run` never
+enrolls anyone. The live web view does (see below).
+
+## Live web view
+
+```bash
+python -m person_id.web --source 4      # then open http://localhost:8000
+```
+
+Shows the camera with a box per face and the enrolled people. A face the
+gallery does not know is saved automatically as `person_N` after a few seconds
+(`auto_enroll` in the config, or the Pause button on the page). Every
+participant must have agreed to this beforehand; pause it when anyone else can
+walk into view. The page has no login and listens on localhost only: from a
+laptop use `ssh -L 8000:localhost:8000 <user>@<robot>`. It owns the camera, so
+do not run `person_id.run` at the same time; pass `--publisher ros2` instead.
 
 ## Data
 
