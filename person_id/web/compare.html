@@ -49,13 +49,36 @@
   .live { display: flex; gap: 26px; flex-wrap: wrap; }
   .stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .stat .k { color: var(--dim); font-size: 13px; }
+  .exportbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .exportbar button { font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+                      background: #2a2f38; color: var(--text); cursor: pointer; }
+  .exportbar button.primary { background: var(--accent); border-color: var(--accent); color: #08172e; font-weight: 600; }
+  .exportbar button:disabled { opacity: .5; cursor: not-allowed; }
+  .exportbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Printed / saved-as-PDF report: light page, no controls, no live panel, panels kept whole. */
+  @media print {
+    :root { color-scheme: light; --bg: #fff; --panel: #fff; --line: #d0d4da; --grid: #e4e6ea; --text: #111; --dim: #555; --muted: #777;
+            --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; }
+    body { background: #fff; }
+    .exportbar, #livepanel, header a, .tip { display: none !important; }
+    header { border-bottom: 1px solid var(--line); }
+    main { max-width: none; padding: 12px 0; }
+    .panel { break-inside: avoid; border-color: var(--line); }
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>Face recognition model comparison</h1>
   <span class="meta" id="meta">loading...</span>
-  <a href="/" style="margin-left:auto">&larr; Live view</a>
+  <div class="exportbar" style="margin-left:auto">
+    <button type="button" class="primary" id="exportcsv" disabled title="Every number on this page, as a spreadsheet">Export CSV</button>
+    <button type="button" id="exportpdf" disabled title="Charts and tables as a PDF report (print dialog: Save as PDF)">Save as PDF</button>
+    <button type="button" id="exportjson" disabled title="The raw benchmark results">Raw JSON</button>
+  </div>
+  <a href="/">&larr; Live view</a>
 </header>
 <main>
   <p class="banner" id="missing" hidden></p>
@@ -73,7 +96,7 @@
     <div id="roc"></div>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="livepanel">
     <h2>Live, current model</h2>
     <p class="sub">Measured on the camera stream right now (moving averages). Switch models in the live view.</p>
     <div class="live" id="live"></div>
@@ -234,6 +257,40 @@ function table(order, models, meta) {
   t.append(body);
 }
 
+// ---- export ----
+function download(text, file, type) {
+  const url = URL.createObjectURL(new Blob([text], {type})), a = document.createElement("a");
+  a.href = url; a.download = file; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+const csvCell = v => { const t = String(v ?? ""); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+function comparisonCsv(order, models, meta) {
+  // Same rows as the "All numbers" table (read from it, so the two always agree), plus context.
+  const lines = [
+    ["Face recognition model comparison"],
+    ["Measured on", meta.host + " (" + meta.machine + ", " + meta.cpus + " CPUs, load " + meta.load_avg_at_start.join(" ") + ")"],
+    ["Started", meta.started],
+    ["Accuracy data", "LFW verification, " + meta.lfw_pairs + " pairs, 10 folds"],
+    ["Detector", meta.detector],
+    ["Execution", meta.execution],
+    [],
+    ["Section", "Metric", ...order.map(n => models[n].label)],
+  ];
+  let section = "";
+  for (const tr of document.querySelectorAll("#table tbody tr")) {
+    if (tr.classList.contains("group")) { section = tr.textContent.trim(); continue; }
+    lines.push([section, ...[...tr.children].map(c => c.textContent.trim())]);
+  }
+  return "\ufeff" + lines.map(r => r.map(csvCell).join(",")).join("\r\n") + "\r\n";  // BOM: Excel reads UTF-8
+}
+function setupExport(d, order, models, meta) {
+  const base = "face-model-comparison-" + meta.host + "-" + (meta.started || "").slice(0, 10);
+  $("exportcsv").onclick = () => download(comparisonCsv(order, models, meta), base + ".csv", "text/csv;charset=utf-8");
+  $("exportjson").onclick = () => download(JSON.stringify(d, null, 2), base + ".json", "application/json");
+  $("exportpdf").onclick = () => { const t = document.title; document.title = base; window.print(); document.title = t; };
+  for (const id of ["exportcsv", "exportpdf", "exportjson"]) $(id).disabled = false;
+}
+
 async function load() {
   const d = await (await fetch("/api/bench")).json();
   if (d.error) { $("missing").hidden = false; $("missing").textContent = d.error; $("meta").textContent = ""; return; }
@@ -260,6 +317,7 @@ async function load() {
   );
   rocChart(order, models);
   table(order, models, meta);
+  setupExport(d, order, models, meta);
 }
 
 async function live() {
