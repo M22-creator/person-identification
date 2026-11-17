@@ -119,3 +119,40 @@ def test_stream_waits_for_the_first_frame_instead_of_crashing(live):
     t.join(timeout=10)
     httpd.shutdown()
     assert got["head"].startswith(b"--frame\r\nContent-Type: image/jpeg")
+
+
+def _faces_after_step(live, frame):
+    live._step(frame)
+    return live.state()["faces"]
+
+
+def test_identicon_mode_sends_no_face_image(live):
+    # Default mode: nothing of the face is cropped or sent; the page draws a pattern from the ID.
+    assert live.state()["thumbnails"] == "identicon"
+    frame = np.random.default_rng(0).integers(0, 256, (120, 160, 3), dtype=np.uint8)
+    faces = _faces_after_step(live, frame)
+    assert faces and all(f["thumb"] is None for f in faces)
+    assert all(t is None for t in live.thumbs.values())
+
+
+def test_pixelate_mode_is_a_6x6_mosaic(live):
+    import base64
+
+    import cv2
+
+    live.thumb_mode = "pixelate"
+    frame = np.random.default_rng(1).integers(0, 256, (120, 160, 3), dtype=np.uint8)
+    thumb = _faces_after_step(live, frame)[0]["thumb"]
+    assert thumb.startswith("data:image/png;base64,")
+    img = cv2.imdecode(np.frombuffer(base64.b64decode(thumb.split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
+    assert img.shape[:2] == (96, 96)
+    assert len(np.unique(img.reshape(-1, 3), axis=0)) <= 36  # at most 6x6 distinct blocks
+
+
+def test_photo_mode_and_bad_mode(live, tmp_path):
+    live.thumb_mode = "photo"
+    frame = np.random.default_rng(2).integers(0, 256, (120, 160, 3), dtype=np.uint8)
+    assert _faces_after_step(live, frame)[0]["thumb"].startswith("data:image/jpeg;base64,")
+    cfg = dict(live.cfg, thumbnails="faces")
+    with pytest.raises(ValueError, match="thumbnails"):
+        server.Live(cfg)

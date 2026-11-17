@@ -42,6 +42,12 @@ auto_enroll: true
 auto_enroll_samples: 10
 auto_enroll_min_face_px: 48   # ignore faces smaller than this
 
+# Web view: how people are pictured in its side lists. The live video always shows the camera.
+#   identicon - pixel-grid pattern generated from the person_id; no face image is cropped or sent
+#   pixelate  - 6x6 mosaic of the face crop (may still be recognizable to people who know them)
+#   photo     - the face crop itself
+thumbnails: identicon
+
 # Camera: "realsense", a device index like "0", or a video file path.
 source: "0"
 width: 640

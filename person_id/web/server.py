@@ -41,6 +41,12 @@ from ..publishers import build_publisher
 from ..types import Detection, IdentityResult, Status
 
 PAGE_PATH = Path(__file__).with_name("index.html")
+# How people are pictured in the side lists (the live video always shows the camera):
+#   identicon - a pixel-grid pattern drawn by the page from the person_id; no face image
+#               is cropped or sent at all (default)
+#   pixelate  - the face crop reduced to a 6x6 mosaic
+#   photo     - the face crop itself
+THUMB_MODES = ("identicon", "pixelate", "photo")
 COMPARE_PATH = Path(__file__).with_name("compare.html")
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
@@ -85,6 +91,9 @@ class Live:
         self.loop = loop
         self.publisher = publisher
         self.auto_on = bool(cfg.get("auto_enroll", True))
+        self.thumb_mode = cfg.get("thumbnails", "identicon")
+        if self.thumb_mode not in THUMB_MODES:
+            raise ValueError(f"thumbnails must be one of {THUMB_MODES}, got '{self.thumb_mode}'")
         self.lock = threading.Lock()  # guards the active model, gallery, auto, faces, thumbs, error
         self._switch_lock = threading.Lock()  # one model switch at a time
         self._identifiers: Dict[str, Identifier] = {}  # loaded once, kept for fast switching
@@ -216,8 +225,9 @@ class Live:
                 self.frame_no += 1
                 self.frame_ready.notify_all()
 
-    @staticmethod
-    def _thumb(frame: np.ndarray, bbox) -> Optional[str]:
+    def _thumb(self, frame: np.ndarray, bbox) -> Optional[str]:
+        if self.thumb_mode == "identicon":
+            return None  # nothing of the face leaves the camera loop; the page draws a pattern
         import cv2
 
         h, w = frame.shape[:2]
@@ -226,6 +236,11 @@ class Live:
         if x2 - x1 < 4 or y2 - y1 < 4:
             return None
         crop = frame[y1:y2, x1:x2]
+        if self.thumb_mode == "pixelate":
+            tiny = cv2.resize(crop, (6, 6), interpolation=cv2.INTER_AREA)
+            big = cv2.resize(tiny, (96, 96), interpolation=cv2.INTER_NEAREST)
+            ok, buf = cv2.imencode(".png", big)  # lossless, so the mosaic stays exactly 6x6
+            return "data:image/png;base64," + base64.b64encode(buf).decode() if ok else None
         scale = 96.0 / crop.shape[0]
         crop = cv2.resize(crop, (max(1, int(crop.shape[1] * scale)), 96))
         ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 75])
@@ -253,6 +268,7 @@ class Live:
                 "learning": sorted(self.learning.values(), key=lambda c: c["key"]),
                 "people": [{"id": p, "thumb": self.thumbs.get(p)} for p in self.gallery.person_ids],
                 "auto_enroll": self.auto_on,
+                "thumbnails": self.thumb_mode,
                 "fps": round(self.fps, 1),
                 "error": self.error,
                 "identifier": self.identifier,
@@ -391,11 +407,15 @@ def main() -> None:
     p.add_argument("--publisher", choices=["none", "stdout", "ros2"], default="none",
                    help="also publish results, like person_id.run does")
     p.add_argument("--no-auto-enroll", action="store_true", help="start with auto-enrollment paused")
+    p.add_argument("--thumbnails", choices=THUMB_MODES,
+                   help="how people are pictured in the lists (default: config, else identicon)")
     a = p.parse_args()
 
     cfg = load_config(a.config, source=a.source, identifier=a.identifier)
     if a.no_auto_enroll:
         cfg["auto_enroll"] = False
+    if a.thumbnails:
+        cfg["thumbnails"] = a.thumbnails
     publisher = None if a.publisher == "none" else build_publisher(a.publisher, cfg["ros2_topic"])
     live = Live(cfg, loop=a.loop, publisher=publisher)
     threading.Thread(target=live.run, daemon=True).start()

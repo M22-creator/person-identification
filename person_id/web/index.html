@@ -32,7 +32,7 @@
   .empty { color: var(--dim); font-size: 14px; margin: 0; }
   .face { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
   .face:first-of-type { border-top: 0; padding-top: 0; }
-  .face img { height: 64px; width: 64px; object-fit: cover; border-radius: 6px; background: #000; }
+  .face img { height: 64px; width: 64px; object-fit: cover; border-radius: 6px; background: #000; image-rendering: pixelated; }
   .face .name { font-weight: 600; }
   .tag { font-size: 12px; padding: 1px 7px; border-radius: 10px; border: 1px solid; margin-left: 6px; }
   .recognized { color: var(--ok); } .uncertain { color: var(--warn); } .unknown { color: #ff7b7b; }
@@ -49,7 +49,7 @@
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .bar { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; width: 160px; }
   .bar > div { height: 100%; background: var(--accent); transition: width .2s; }
-  .person img { height: 36px; width: 36px; object-fit: cover; border-radius: 4px; margin-right: 10px; vertical-align: middle; }
+  .person img { height: 36px; width: 36px; object-fit: cover; border-radius: 4px; margin-right: 10px; vertical-align: middle; image-rendering: pixelated; }
   .person { display: flex; justify-content: space-between; align-items: center; padding: 6px 0;
             border-top: 1px solid var(--line); }
   .person:first-of-type { border-top: 0; }
@@ -112,6 +112,32 @@ let armed = null;      // ID whose Remove button was clicked once
 let autoOn = true;
 let switching = false;
 
+// Pixel-grid avatar ("identicon") generated from the person_id: the same ID always gives the
+// same pattern, and it contains nothing of the person's face.
+const svgUrl = svg => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+const iconCache = {};
+function identicon(id) {
+  if (iconCache[id]) return iconCache[id];
+  let h = 2166136261;  // FNV-1a
+  for (const ch of id) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  let bits = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+  if (bits.toString(2).split("1").length - 1 < 6) bits = ~bits >>> 0;  // avoid near-empty grids
+  const fill = `hsl(${h % 360}, 62%, 58%)`;
+  let cells = "";
+  for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
+    if ((bits >>> (y * 3 + x)) & 1) {
+      cells += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
+      if (x < 2) cells += `<rect x="${4 - x}" y="${y}" width="1" height="1"/>`;
+    }
+  }
+  return (iconCache[id] = svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.75 -0.75 6.5 6.5" shape-rendering="crispEdges">` +
+    `<rect x="-0.75" y="-0.75" width="6.5" height="6.5" fill="#2a2f38"/><g fill="${fill}">${cells}</g></svg>`));
+}
+// Neutral tile for faces that have no ID yet ("?" not enrolled, "+" being learned).
+const placeholder = sym => svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#2a2f38"/>` +
+  `<text x="32" y="44" font-family="system-ui, sans-serif" font-size="32" font-weight="600" text-anchor="middle" fill="#9aa3ae">${sym}</text></svg>`);
+const pictureFor = (thumb, id, sym) => thumb || (id ? identicon(id) : placeholder(sym));
+
 function renderModels(models, current) {
   const sel = $("model");
   const key = models.map(m => m.name + (m.available ? "" : "!")).join(",");
@@ -147,7 +173,9 @@ function renderFaces(faces) {
   if (!faces.length) { box.append(el("p", "empty", "Nobody in view.")); return; }
   for (const f of faces) {
     const row = el("div", "face");
-    const img = el("img"); img.alt = ""; if (f.thumb) img.src = f.thumb; row.append(img);
+    const img = el("img"); img.alt = "";
+    img.src = pictureFor(f.thumb, f.person_id || (f.learning && f.learning.enrolled_as), f.learning ? "+" : "?");
+    row.append(img);
     const info = el("div");
     const top = el("div");
     top.append(el("span", "name", f.person_id || (f.status === "unknown" ? "Not enrolled" : "Not sure")));
@@ -163,7 +191,7 @@ function renderPeople(people) {
   if (!people.length) { box.append(el("p", "empty", "Nobody enrolled yet.")); return; }
   for (const {id, thumb} of people) {
     const row = el("div", "person"); const name = el("span");
-    if (thumb) { const img = el("img"); img.alt = ""; img.src = thumb; name.append(img); }
+    const img = el("img"); img.alt = ""; img.src = pictureFor(thumb, id); name.append(img);
     name.append(id); row.append(name);
     const b = el("button", "danger", armed === id ? "Click again to delete" : "Remove");
     b.type = "button";
@@ -186,7 +214,7 @@ function renderLearning(list, on) {
   if (!list.length) { box.append(el("p", "empty", "No new faces right now.")); return; }
   for (const c of list) {
     const row = el("div", "face");
-    const img = el("img"); img.alt = ""; if (c.thumb) img.src = c.thumb; row.append(img);
+    const img = el("img"); img.alt = ""; img.src = pictureFor(c.thumb, null, "+"); row.append(img);
     const info = el("div");
     info.append(el("div", "name", "New face"));
     const bar = el("div", "bar"), fill = el("div"); fill.style.width = Math.round(100 * c.taken / c.target) + "%"; bar.append(fill);
