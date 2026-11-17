@@ -1,24 +1,39 @@
-# Which identifier backend to use:
-#   sface       - OpenCV YuNet detector + SFace embedding (weights: python -m person_id.download_models)
-#   insightface - SCRFD + ArcFace "buffalo_l" (pip install insightface onnxruntime; thresholds NOT tuned)
+# Which identifier backend to use (the web view can switch between the compared ones):
+#   sface       - YuNet detector + OpenCV SFace, 128-D        (python -m person_id.download_models)
+#   arcface_mbf - YuNet detector + ArcFace MobileFaceNet, 512-D (... --model arcface_mbf; needs onnxruntime)
+#   arcface_r50 - YuNet detector + ArcFace ResNet-50, 512-D     (... --model arcface_r50; needs onnxruntime)
+#   insightface - full insightface package, SCRFD detector (thresholds NOT tuned)
 #   dummy       - detects nobody (for tests / wiring)
-# The thresholds below are for sface. A gallery made with one backend cannot be used with another.
 identifier: sface
 
-# Where enrolled embeddings are stored (git-ignored).
+# Fallback gallery file and thresholds, for backends without an entry under models:.
 gallery_path: data/gallery.npz
+recognize_threshold: 0.50
+unknown_threshold: 0.30
 
-# Cosine-similarity thresholds for the sface backend.
+# Per-backend gallery file (git-ignored) and cosine-similarity thresholds.
+# Galleries are separate because embeddings of different models cannot be compared.
 #   score >= recognize_threshold            -> recognized
 #   score <  unknown_threshold              -> unknown
 #   in between                              -> uncertain
-# Tuned on LFW (6000 pairs, tools/bench_lfw.py; 10-fold accuracy 99.33%):
-#   0.40 -> FAR 0.03% / TAR 97.6% per pair (conservative: the gallery match takes
-#           the max over all enrolled samples, which raises the real FAR)
-#   0.30 -> only 0.8% of same-person pairs score lower
+# All three were set with the same rule on LFW (6000 pairs, tools/bench_models.py):
+#   recognize = lowest 0.05 step with LFW FAR <= 0.05% per pair (conservative: a gallery
+#               match takes the max over all enrolled samples, which raises the real FAR)
+#   unknown   = best-accuracy LFW split, rounded down to a 0.05 step
 # LFW is web photos; re-check on robot-camera footage before relying on them.
-recognize_threshold: 0.40
-unknown_threshold: 0.30
+models:
+  sface:
+    gallery_path: data/gallery.npz
+    recognize_threshold: 0.40   # LFW: TAR 97.6%, FAR 0.03%
+    unknown_threshold: 0.30     # LFW: 0.8% of same-person pairs score lower
+  arcface_mbf:
+    gallery_path: data/gallery_arcface_mbf.npz
+    recognize_threshold: 0.40   # PROVISIONAL until tools/bench_models.py runs
+    unknown_threshold: 0.30
+  arcface_r50:
+    gallery_path: data/gallery_arcface_r50.npz
+    recognize_threshold: 0.40   # PROVISIONAL until tools/bench_models.py runs
+    unknown_threshold: 0.30
 
 # Live web view (python -m person_id.web) only: save faces the gallery does not
 # know as "person_N" once they have been seen clearly this many times. Use only
