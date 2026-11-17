@@ -3,7 +3,7 @@ name = "person-id"
 version = "0.1.0"
 description = "Person identification module for the AVA robot"
 requires-python = ">=3.8"
-dependencies = ["numpy", "pyyaml"]
+dependencies = ["numpy", "pyyaml", "opencv-python>=4.8"]  # opencv: default sface backend + camera
 
 [project.optional-dependencies]
 camera = ["opencv-python>=4.8"]
