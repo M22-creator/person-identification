@@ -28,12 +28,12 @@ models:
     unknown_threshold: 0.30     # LFW: 0.8% of same-person pairs score lower
   arcface_mbf:
     gallery_path: data/gallery_arcface_mbf.npz
-    recognize_threshold: 0.40   # PROVISIONAL until tools/bench_models.py runs
-    unknown_threshold: 0.30
+    recognize_threshold: 0.30   # LFW on avathor: TAR at FAR 0.1% = 99.4%; 10-fold accuracy 99.55%
+    unknown_threshold: 0.20
   arcface_r50:
     gallery_path: data/gallery_arcface_r50.npz
-    recognize_threshold: 0.40   # PROVISIONAL until tools/bench_models.py runs
-    unknown_threshold: 0.30
+    recognize_threshold: 0.25   # LFW on avathor: TAR at FAR 0.1% = 99.7%; 10-fold accuracy 99.85%
+    unknown_threshold: 0.25     # the rule leaves no uncertain band for this model
 
 # Live web view (python -m person_id.web) only: save faces the gallery does not
 # know as "person_N" once they have been seen clearly this many times. Use only
